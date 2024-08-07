@@ -79,8 +79,7 @@ def check_tasks(token):
                 titlenya = task['title']
                 print(f"{Fore.YELLOW+Style.BRIGHT}Checking Task: {titlenya} Lists")
                 taskList = task.get('tasks', [])
-
-for lists in taskList:
+                for lists in taskList:
                     task_status = lists.get('status', None)
                     task_reward = lists.get('reward', None)
                     task_title = lists.get('title', None)
@@ -155,8 +154,7 @@ def claim_task(token, task_id,titlenya):
         
 def get_new_token(query_id):
     import json
-
-# Header untuk permintaan HTTP
+    # Header untuk permintaan HTTP
     headers = {
         "accept": "application/json, text/plain, */*",
         "accept-language": "en-US,en;q=0.9",
@@ -326,8 +324,7 @@ def refresh_token(old_refresh_token):
         'accept': 'application/json, text/plain, */*',
         'accept-language': 'en-US,en;q=0.9',
         'Content-Type': 'application/json',
-
-'origin': 'https://telegram.blum.codes',
+        'origin': 'https://telegram.blum.codes',
         'referer': 'https://telegram.blum.codes/'
     }
     data = {
@@ -411,8 +408,7 @@ def check_daily_reward(token):
         'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors',
         'sec-fetch-site': 'same-site'
-
-}
+    }
     try:
         response = requests.post('https://game-domain.blum.codes/api/v1/daily-reward?offset=-420', headers=headers, timeout=10)
         if response.status_code == 400:
@@ -509,8 +505,7 @@ while True:
 
         for index, query_id in enumerate(query_ids, start=1):
             token = get_new_token(query_id)  # Mendapatkan token baru
-
-user_info = get_user_info(token)
+            user_info = get_user_info(token)
             if user_info is None:
                 continue
             print(f"{Fore.BLUE+Style.BRIGHT}\r\n====[{Fore.WHITE+Style.BRIGHT}Akun ke-{index} {user_info['username']}{Fore.BLUE+Style.BRIGHT}]====")  
@@ -570,8 +565,7 @@ user_info = get_user_info(token)
                                 print(f"\r{Fore.GREEN+Style.BRIGHT}[ Claim Balance ] : Farming started.", flush=True)
                             else:
                                 print(f"\r{Fore.RED+Style.BRIGHT}[ Claim Balance ] : Gagal start farming", start_response.status_code, flush=True)
-
-else:
+                        else:
                             print(f"\r{Fore.RED+Style.BRIGHT}[ Claim Balance ] : Gagal claim", claim_response.status_code, flush=True)
                 else:
                     print(f"\n{Fore.RED+Style.BRIGHT}[ Claim Balance ] : Gagal mendapatkan informasi farming", flush=True)
@@ -626,8 +620,7 @@ else:
                     else:
                         # Periksa apakah 'canClaimAt' ada sebelum mengaksesnya
                         can_claim_at = friend_balance.get('canClaimAt')
-
-if can_claim_at:
+                        if can_claim_at:
                             claim_time = datetime.datetime.fromtimestamp(int(can_claim_at) / 1000)
                             current_time = datetime.datetime.now()
                             time_diff = claim_time - current_time
@@ -677,8 +670,7 @@ if can_claim_at:
                         print(f"{Fore.RED+Style.BRIGHT}[ Play Game ] : Token tidak valid, mendapatkan token baru...")
                         token = get_new_token(query_id)  # Asumsi query_id tersedia di scope ini
                         continue  # Kembali ke awal loop untuk mencoba lagi dengan token baru
-
-else:
+                    else:
                         print(f"\r{Fore.YELLOW+Style.BRIGHT}[ Play Game ] : Game selesai: {claim_response.text}", flush=True)
                         break
                 # Setelah klaim game, cek lagi jumlah tiket
@@ -715,3 +707,4 @@ else:
  
     except Exception as e:
             print(f"An error occurred: {str(e)}")
+
