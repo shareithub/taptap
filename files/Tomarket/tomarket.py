@@ -1,397 +1,351 @@
-import requests
-import time
-from colorama import Fore, Style, init
+from colorama import *
+from datetime import datetime
+from fake_useragent import FakeUserAgent
+from time import sleep
 import json
-from datetime import datetime, timedelta, timezone
+import os
+import pytz
 import random
-import urllib.parse
-import base64
+import requests
+import sys
 
-headers = {
-    'accept': 'application/json, text/plain, */*',
-    'accept-language': 'en,en-US;q=0.9',
-    'cache-control': 'no-cache',
-    'content-type': 'application/json',
-    'origin': 'https://mini-app.tomarket.ai',
-    'pragma': 'no-cache',
-    'priority': 'u=1, i',
-    'referer': 'https://mini-app.tomarket.ai/',
-    'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="126", "Android WebView";v="126"',
-    'sec-ch-ua-mobile': '?1',
-    'sec-ch-ua-platform': 'Android',
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-site': 'same-site',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 13; M2012K11AG Build/TKQ1.220829.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/126.0.6478.134 Mobile Safari/537.36',
-    'x-requested-with': 'org.telegram.messenger.web'
-}
 
- 
-
-def load_proxies():
-    proxies = []
-    try:
-        with open('proxy.txt', 'r') as proxy_file:
-            proxies = proxy_file.readlines()
-    except FileNotFoundError:
-        print("Proxy file not found.")
-    return [proxy.strip() for proxy in proxies]
-
-proxies = load_proxies()
-
- 
-
-import http.client
-
- 
-
-def get_proxy():
-    if proxies:
-        proxy = random.choice(proxies)
-        user_pass, ip_port = proxy.split('@')
-        proxy_username, proxy_password = user_pass.split(':')
-        proxy_auth = f"{proxy_username}:{proxy_password}"
-        
-        return {
-            "http": f"http://{proxy_auth}@{ip_port}",
-            "https": f"http://{proxy_auth}@{ip_port}",  # Use HTTP for both
+class Tomarket:
+    def __init__(self) -> None:
+        self.headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive',
+            'Host': 'api-web.tomarket.ai',
+            'Origin': 'https://mini-app.tomarket.ai',
+            'Referer': 'https://mini-app.tomarket.ai/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-site',
+            'User-Agent': FakeUserAgent().random
         }
-    return None
 
+    def clear_terminal(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
 
- 
+    def print_timestamp(self, message, timezone='Asia/Jakarta'):
+        local_tz = pytz.timezone(timezone)
+        now = datetime.now(local_tz)
+        timestamp = now.strftime(f'%x %X %Z')
+        print(
+            f"{Fore.BLUE + Style.BRIGHT}[ {timestamp} ]{Style.RESET_ALL}"
+            f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+            f"{message}",
+            flush=True
+        )
 
-def get_access_token(query_data):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/user/login'
-    proxy = get_proxy()
-    try:
-        data = json.dumps(
-            {
-                "init_data": query_data,
-                "invite_code": "",
-            })
-        response = requests.post(url, headers=headers, data=data, proxies=proxy)
-        response.raise_for_status() 
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Query Anda Salah")
-        return None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None
+    def daily_claim(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/daily/claim'
+        data = json.dumps({'game_id': 'fa873d13-d831-4d6f-8aee-9cff7a1d0db1'})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
+        response.raise_for_status()
+        daily_claim = response.json()
+        if 'status' in daily_claim:
+            if daily_claim['status'] in [0, 200]:
+                self.print_timestamp(
+                    f"{Fore.GREEN + Style.BRIGHT}[ Daily Claimed ]{Style.RESET_ALL}"
+                    f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                    f"{Fore.YELLOW + Style.BRIGHT}[ Points {daily_claim['data']['today_points']} ]{Style.RESET_ALL}"
+                    f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                    f"{Fore.BLUE + Style.BRIGHT}[ Day {daily_claim['data']['today_game']} ]{Style.RESET_ALL}"
+                )
+            elif daily_claim['status'] == 400 or daily_claim['message'] == 'already_check':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Already Check Daily Claim ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Daily Claim ]{Style.RESET_ALL}")
+        elif 'code' in daily_claim:
+            if daily_claim['code'] == 400 or daily_claim['message'] == 'claim throttle':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Daily Claim Throttle ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Daily Claim ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Daily Claim ]{Style.RESET_ALL}")
 
-def get_balance(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/user/balance'
-    headers['Authorization'] = token
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, proxies=proxy)
+    def user_balance(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/user/balance'
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': '0'
+        })
+        response = requests.post(url=url, headers=self.headers)
         response.raise_for_status()
         return response.json()
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None
 
-def ghalibie_gacor(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/tasks/claim'
-    headers['Authorization'] = token
-    payload = {"task_id": 41}
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, json=payload,proxies=proxy)
+    def farm_start(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/farm/start'
+        data = json.dumps({'game_id': '53b22103-c7ff-413d-bc63-20f6fb806a07'})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
         response.raise_for_status()
-        return response.json()
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None
-    
-def claim_daily(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/daily/claim'
-    headers['Authorization'] = token
-    payload = {"game_id": "fa873d13-d831-4d6f-8aee-9cff7a1d0db1"}
-    proxy = get_proxy()
+        farm_start = response.json()
+        if 'status' in farm_start:
+            if farm_start['status'] == 0:
+                self.print_timestamp(f"{Fore.GREEN + Style.BRIGHT}[ Farm Started ]{Style.RESET_ALL}")
+                farm_end_at = datetime.fromtimestamp(farm_start['data']['end_at'], pytz.timezone('Asia/Jakarta'))
+                timestamp_farm_end_at = farm_end_at.strftime('%X %Z')
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Farm Can Claim At {timestamp_farm_end_at} ]{Style.RESET_ALL}")
+            elif farm_start['status'] == 500 or farm_start['message'] == 'game already started':
+                self.print_timestamp(f"{Fore.MAGENTA + Style.BRIGHT}[ Farm Already Started ]{Style.RESET_ALL}")
+                farm_end_at = datetime.fromtimestamp(farm_start['data']['end_at'], pytz.timezone('Asia/Jakarta'))
+                timestamp_farm_end_at = farm_end_at.strftime('%X %Z')
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Farm Can Claim At {timestamp_farm_end_at} ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Farm Start ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Farm Start ]{Style.RESET_ALL}")
 
-    try:
-        response = requests.post(url, headers=headers, json=payload, proxies=proxy)
+    def farm_claim(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/farm/claim'
+        data = json.dumps({'game_id': '53b22103-c7ff-413d-bc63-20f6fb806a07'})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
         response.raise_for_status()
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None, None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None, None
+        farm_claim = response.json()
+        if 'status' in farm_claim:
+            if farm_claim['status'] == 0:
+                self.print_timestamp(
+                    f"{Fore.GREEN + Style.BRIGHT}[ Farm Claimed {farm_claim['data']['points']} ]{Style.RESET_ALL}"
+                    f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                    f"{Fore.BLUE + Style.BRIGHT}[ Starting Farm ]{Style.RESET_ALL}"
+                )
+                self.farm_start(token=token)
+            elif farm_claim['status'] == 500 or farm_claim['message'] == 'farm not started or claimed':
+                self.print_timestamp(f"{Fore.MAGENTA + Style.BRIGHT}[ Farm Not Started ]{Style.RESET_ALL}")
+                self.farm_start(token=token)
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Farm Claim ]{Style.RESET_ALL}")
+        elif 'code' in farm_claim:
+            if farm_claim['code'] == 400 or farm_claim['message'] == 'claim throttle':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Farm Claim Throttle ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Farm Claim ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Farm Claim ]{Style.RESET_ALL}")
 
-def start_farming(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/farm/start'
-    headers['Authorization'] = token
-    payload = {"game_id": "53b22103-c7ff-413d-bc63-20f6fb806a07"}
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, json=payload, proxies=proxy)
+    def game_play(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/game/play'
+        data = json.dumps({'game_id': '59bcd12e-04e2-404c-a172-311a0084587d'})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
         response.raise_for_status()
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None, None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None, None
-    
-def claim_farming(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/farm/claim'
-    headers['Authorization'] = token
-    payload = {"game_id": "53b22103-c7ff-413d-bc63-20f6fb806a07"}
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, json=payload, proxies=proxy)
+        game_play = response.json()
+        if 'status' in game_play:
+            if game_play['status'] == 0:
+                self.print_timestamp(
+                    f"{Fore.GREEN + Style.BRIGHT}[ Game Started ]{Style.RESET_ALL}"
+                    f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                    f"{Fore.BLUE + Style.BRIGHT}[ Please Wait 30 Seconds ]{Style.RESET_ALL}"
+                )
+                sleep(33)
+                self.game_claim(token=token, points=random.randint(6000, 6001))
+            elif game_play['status'] == 500 or game_play['message'] == 'no chance':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ No Chance To Start Game ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Game Play ]{Style.RESET_ALL}")
+
+    def game_claim(self, token: str, points: int):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/game/claim'
+        data = json.dumps({
+            'game_id': '59bcd12e-04e2-404c-a172-311a0084587d',
+            'points': points
+        })
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
         response.raise_for_status()
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None, None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None, None
+        game_claim = response.json()
+        if 'status' in game_claim:
+            if game_claim['status'] == 0:
+                self.print_timestamp(f"{Fore.GREEN + Style.BRIGHT}[ Game Claimed {game_claim['data']['points']} ]{Style.RESET_ALL}")
+            elif game_claim['status'] == 500 or game_claim['message'] == 'game not start':
+                self.print_timestamp(f"{Fore.MAGENTA + Style.BRIGHT}[ Game Not Started ]{Style.RESET_ALL}")
+                self.game_play(token=token)
+        elif 'code' in game_claim:
+            if game_claim['code'] == 400 or game_claim['message'] == 'claim throttle':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Farm Claim Throttle ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Game Claim ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Game Claim ]{Style.RESET_ALL}")
 
-def play_game(token):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/game/play'
-    headers['Authorization'] = token
-    payload = {"game_id": "59bcd12e-04e2-404c-a172-311a0084587d"}
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, json=payload, proxies=proxy)
+    def tasks_list(self, token: str):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/tasks/list'
+        data = json.dumps({'language_code': 'en'})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
         response.raise_for_status()
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None, None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None, None
-
-def claim_game(token, point):
-    url = 'https://api-web.tomarket.ai/tomarket-game/v1/game/claim'
-    headers['Authorization'] = token
-    payload = {"game_id": "59bcd12e-04e2-404c-a172-311a0084587d", "points": point}
-    proxy = get_proxy()
-    try:
-        response = requests.post(url, headers=headers, json=payload, proxies=proxy)
-        response.raise_for_status()
-        return response.json(), response.status_code
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None, None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None, None
-
-
-def main():
-    tokens = []
-    try:
-        with open('tokens.txt', 'r') as token_file:
-            tokens = token_file.readlines()
-    except FileNotFoundError:
-        pass
-    while True:
-        print_welcome_message()
-        try:
-            with open('query.txt', 'r') as file:
-                queries = file.readlines()
- 
-            for i, query_data in enumerate(queries):
-                query_data = query_data.strip()
-                if i < len(tokens):
-                    token = tokens[i].strip()
-                else:
-                    print(f"{Fore.YELLOW+Style.BRIGHT}Getting access token..", end="\r", flush=True)
-                    auth_response, auth_status = get_access_token(query_data)
-           
-                    
-                    if auth_status == 200:
-                        if auth_response['status'] == 200:
-                            token = auth_response['data']['access_token']
-                            tokens.append(token)
-                            with open('tokens.txt', 'a') as token_file:
-                                token_file.write(token + '\n')
-                        else:
-                            print(f"{Fore.RED+Style.BRIGHT}Login Failed {Style.RESET_ALL}           ", flush=True)
-                            tokens.append(f'GAGAL AKUN NOMOR {i+1}')
-                            with open('tokens.txt', 'a') as token_file:
-                                token_file.write(f'GAGAL AKUN NOMOR {i+1} {query_data}')
+        tasks_list = response.json()
+        for category in tasks_list['data']:
+            for task in tasks_list['data'][category]:
+                if 'endTime' in task and task['endTime']:
+                        end_time = datetime.strptime(task['endTime'], '%Y-%m-%d %H:%M:%S')
+                        if end_time < datetime.now():
                             continue
+                if task['status'] == 0 and task['type'] == "mysterious":
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Claiming {task['title']} ]{Style.RESET_ALL}")
+                    self.tasks_claim(token=token, task_id=task['taskId'])
+                elif task['status'] == 0:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Starting {task['title']} ]{Style.RESET_ALL}")
+                    start_task = self.tasks_start(token=token, task_id=task['taskId'])
+                    if start_task['status'] == 0:
+                        if start_task['data']['status'] == 1:
+                            self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Checking {task['title']} ]{Style.RESET_ALL}")
+                            sleep(task['waitSecond'] + 3)
+                            self.tasks_check(token=token, task_id=task['taskId'])
+                        elif start_task['data']['status'] == 2:
+                            self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Claiming {task['title']} ]{Style.RESET_ALL}")
+                            self.tasks_check(token=token, task_id=task['taskId'])
+                    elif start_task['status'] == 500 and start_task['message'] == 'Handle user\'s task error':
+                        self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Finish This Task By Itself ]{Style.RESET_ALL}")
                     else:
-                        print(f"{Fore.RED+Style.BRIGHT}Login Failed {Style.RESET_ALL}           ", flush=True)
-                        tokens.append(f'GAGAL AKUN NOMOR {i+1}')
-                        with open('tokens.txt', 'a') as token_file:
-                            token_file.write(f'GAGAL AKUN NOMOR {i+1} {query_data}')
-                        continue
-                print(f"{Fore.YELLOW+Style.BRIGHT}Checking account..", end="\r", flush=True)
-                
-                user_data = query_data.split('&')[0].split('=')[1]
-                user_info = urllib.parse.unquote(user_data)
-                user_info = user_info.replace('%22', '"').replace('%2C', ',').replace('%3A', ':').replace('%24', '$').replace('%23', '#')
-                try:
-                    user_info = json.loads(user_info)
-                except json.JSONDecodeError as e:
-                    print(f"Failed to parse user info: {e}")
-                    continue
-                firstname = user_info.get('first_name', 'Unknown')
-                lastname = user_info.get('last_name', '')
-                print(Fore.CYAN + Style.BRIGHT + f"===== [ Akun {i+1} - {firstname} {lastname} ] =====             ", flush=True)
-                print(f"{Fore.YELLOW+Style.BRIGHT}Getting balance..", end="\r", flush=True)
-                proxy = get_proxy()
-                if proxy:
-                    print(f"{Fore.GREEN+Style.BRIGHT}[ Proxy ]: {proxy['http']} {Style.RESET_ALL}", flush=True)
+                        self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Start ]{Style.RESET_ALL}")
+                elif task['status'] == 1:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ You Haven't Finish Or Start {task['title']} ]{Style.RESET_ALL}")
+                    self.tasks_check(token=token, task_id=task['taskId'])
+                elif task['status'] == 2:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Claiming {task['title']} ]{Style.RESET_ALL}")
+                    self.tasks_check(token=token, task_id=task['taskId'])
+
+    def tasks_start(self, token: str, task_id: int):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/tasks/start'
+        data = json.dumps({'task_id': task_id})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
+        response.raise_for_status()
+        return response.json()
+
+    def tasks_check(self, token: str, task_id: int):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/tasks/check'
+        data = json.dumps({'task_id': task_id})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
+        response.raise_for_status()
+        tasks_check = response.json()
+        if 'status' in tasks_check:
+            if 'status' in tasks_check['data']:
+                if tasks_check['data']['status'] == 0:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Starting Task ]{Style.RESET_ALL}")
+                    self.tasks_start(token=token, task_id=task_id)
+                elif tasks_check['data']['status'] == 1:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ This Task Still Haven't Finished ]{Style.RESET_ALL}")
+                elif tasks_check['data']['status'] == 2:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Claiming Task ]{Style.RESET_ALL}")
+                    self.tasks_claim(token=token, task_id=task_id)
+                elif tasks_check['data']['status'] == 3:
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ This Task Already Claimed ]{Style.RESET_ALL}")
                 else:
-                    print(f"{Fore.GREEN+Style.BRIGHT}[ Proxy ]: No Proxy {Style.RESET_ALL}          ", flush=True)
-                balance_response = get_balance(token)
-                if balance_response is not None:
-                    balance = float(balance_response['data'].get('available_balance'))
-                    balance = f"{balance:,.0f}".replace(",", ".")  # Format balance with dots as thousand separators
-                    tiket = balance_response['data'].get('play_passes')
-                    print(f"{Fore.GREEN+Style.BRIGHT}[ Balance ]: {balance} {Style.RESET_ALL}           ", flush=True)
-                    print(f"{Fore.GREEN+Style.BRIGHT}[ Tiket ]: {tiket} {Style.RESET_ALL}           ", flush=True)
-                    print(f"{Fore.YELLOW+Style.BRIGHT}[ Combo ]: Claiming.. {Style.RESET_ALL}", end="\r" ,flush=True)
-                    time.sleep(2)
-                    combo = ghalibie_gacor(token)
-                    if combo['status'] == 0:
-                        print(f"{Fore.GREEN+Style.BRIGHT}[ Combo ]: Claimed!         {Style.RESET_ALL}", flush=True)
-                    else:
-                        print(f"{Fore.RED+Style.BRIGHT}[ Combo ]: Failed to claim. {combo} {Style.RESET_ALL}", flush=True)
-                    print(f"{Fore.YELLOW+Style.BRIGHT}[ Daily ]: Claiming.. {Style.RESET_ALL}", end="\r" ,flush=True)
-                    time.sleep(2)
-                    daily, daily_status_code = claim_daily(token)
-                    if daily_status_code == 400:
-                        if daily['message'] == 'already_check':
-                            day = daily['data']['check_counter']
-                            point = daily['data']['today_points']
-                            print(f"{Fore.GREEN+Style.BRIGHT}[ Daily ]: Day {day} Already checkin | {point} Point{Style.RESET_ALL}", flush=True)
-                        else:
-                            print(f"{Fore.RED+Style.BRIGHT}[ Daily ]: Gagal {daily} {Style.RESET_ALL}", flush=True)
-                    elif daily_status_code == 200:
-                        day = daily['data']['check_counter']
-                        point = daily['data']['today_points']
-                        print(f"{Fore.GREEN+Style.BRIGHT}[ Daily ]: Day {day} Claimed | {point} Point{Style.RESET_ALL}", flush=True)
-                    else:
-                        print(f"{Fore.RED+Style.BRIGHT}[ Daily ]: Gagal {daily} {Style.RESET_ALL}", flush=True)
+                    self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Check ]{Style.RESET_ALL}")
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Check ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Check ]{Style.RESET_ALL}")
 
-                    print(f"{Fore.YELLOW+Style.BRIGHT}[ Farming ]: Checking.. {Style.RESET_ALL}", end="\r", flush=True)
-                    time.sleep(2)
-                    farming, farming_status_code = start_farming(token)
-                    if farming_status_code == 200:
-                        end_time = datetime.fromtimestamp(farming['data']['end_at'])
-                        remaining_time = end_time - datetime.now()
-                        hours, remainder = divmod(remaining_time.total_seconds(), 3600)
-                        minutes, _ = divmod(remainder, 60)
-                        print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Started. Claim in: {int(hours)} jam {int(minutes)} menit {Style.RESET_ALL}", flush=True)
-                        if datetime.now() > end_time:
-                                print(f"{Fore.YELLOW+Style.BRIGHT}[ Farming ]: Claiming.. {Style.RESET_ALL}", end="\r", flush=True)
-                                claim_response, claim_status_code = claim_farming(token)
-                                if claim_status_code == 200:
-                                    poin = claim_response["data"]["claim_this_time"]
-                                    print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Success Claim Farming! Reward: {poin} {Style.RESET_ALL}       ", flush=True)
-                                    print(f"{Fore.YELLOW+Style.BRIGHT}[ Farming ]: Starting.. {Style.RESET_ALL}", end="\r", flush=True)
-                                    time.sleep(2)
-                                    farming, farming_status_code = start_farming(token)
-                                    if farming_status_code == 200:
-                                        end_time = datetime.fromtimestamp(farming['data']['end_at'])
-                                        remaining_time = end_time - datetime.now()
-                                        hours, remainder = divmod(remaining_time.total_seconds(), 3600)
-                                        minutes, _ = divmod(remainder, 60)
-                                        print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Started. Claim in: {int(hours)} jam {int(minutes)} menit {Style.RESET_ALL}", flush=True)
+    def tasks_claim(self, token: str, task_id: int):
+        url = 'https://api-web.tomarket.ai/tomarket-game/v1/tasks/claim'
+        data = json.dumps({'task_id': task_id})
+        self.headers.update({
+            'Authorization': token,
+            'Content-Length': str(len(data)),
+            'Content-Type': 'application/json'
+        })
+        response = requests.post(url=url, headers=self.headers, data=data)
+        response.raise_for_status()
+        tasks_claim = response.json()
+        if 'status' in tasks_claim:
+            if tasks_claim['status'] == 0:
+                self.print_timestamp(f"{Fore.GREEN + Style.BRIGHT}[ Claimed ]{Style.RESET_ALL}")
+            elif tasks_claim['status'] == 500 and tasks_claim['message'] == 'You haven\'t start this task':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ You Haven't Start This Task ]{Style.RESET_ALL}")
+                self.tasks_start(token=token, task_id=task_id)
+            elif tasks_claim['status'] == 500 and tasks_claim['message'] == 'You haven\'t finished this task':
+                self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ You Haven't Finished This Task ]{Style.RESET_ALL}")
+                self.tasks_check(token=token, task_id=task_id)
+            else:
+                self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Claim ]{Style.RESET_ALL}")
+        else:
+            self.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ Error Tasks Claim ]{Style.RESET_ALL}")
 
-                                else:
-                                    print(f"{Fore.RED+Style.BRIGHT}Failed to claim farming: {claim_response} {Style.RESET_ALL}          ", flush=True)
-                    elif farming_status_code == 500:
-                        if farming['message'] == 'game already started':
-                            end_time = datetime.fromtimestamp(farming['data']['end_at'])
-                            remaining_time = end_time - datetime.now()
-                            hours, remainder = divmod(remaining_time.total_seconds(), 3600)
-                            minutes, _ = divmod(remainder, 60)
-                            print(f"{Fore.CYAN+Style.BRIGHT}[ Farming ]: Already Started. Claim in: {int(hours)} jam {int(minutes)} menit {Style.RESET_ALL}", flush=True)
-                            
-                            # Check if current time is past end_time
-                            if datetime.now() > end_time:
-                                print(f"{Fore.YELLOW+Style.BRIGHT}[ Farming ]: Claiming.. {Style.RESET_ALL}", end="\r", flush=True)
-                                claim_response, claim_status_code = claim_farming(token)
-                                if claim_status_code == 200:
-                                    poin = claim_response["data"]["claim_this_time"]
-                                    print(f"{Fore.GREEN+Style.BRIGHT}Success claim farming! Reward: {poin} {Style.RESET_ALL}", flush=True)
-                                    print(f"{Fore.YELLOW+Style.BRIGHT}[ Farming ]: Starting.. {Style.RESET_ALL}", end="\r", flush=True)
-                                    time.sleep(2)
-                                    farming, farming_status_code = start_farming(token)
-                                    if farming_status_code == 200:
-                                        end_time = datetime.fromtimestamp(farming['data']['end_at'])
-                                        remaining_time = end_time - datetime.now()
-                                        hours, remainder = divmod(remaining_time.total_seconds(), 3600)
-                                        minutes, _ = divmod(remainder, 60)
-                                        print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Started. Claim in: {int(hours)} jam {int(minutes)} menit {Style.RESET_ALL}", flush=True)
+    def main(self):
+        accounts = json.load(open('data.json', 'r'))['accounts']
+        for account in accounts:
+            self.print_timestamp(f"{Fore.CYAN + Style.BRIGHT}[ {account['name']} ]{Style.RESET_ALL}")
+            # Daily
+            self.daily_claim(token=account['token'])
+            # Info
+            balance = self.user_balance(token=account['token'])
+            self.print_timestamp(
+                f"{Fore.YELLOW + Style.BRIGHT}[ Balance {balance['data']['available_balance']} ]{Style.RESET_ALL}"
+                f"{Fore.WHITE + Style.BRIGHT} | {Style.RESET_ALL}"
+                f"{Fore.BLUE + Style.BRIGHT}[ Play Passes {balance['data']['play_passes']} ]{Style.RESET_ALL}"
+            )
+            # Farm
+            if 'farming' in balance['data']:
+                now = datetime.now(pytz.timezone('Asia/Jakarta'))
+                farm_end_at = datetime.fromtimestamp(balance['data']['farming']['end_at'], pytz.timezone('Asia/Jakarta'))
+                if now >= farm_end_at:
+                    self.farm_claim(token=account['token'])
+                else:
+                    timestamp_farm_end_at = farm_end_at.strftime('%X %Z')
+                    self.print_timestamp(f"{Fore.YELLOW + Style.BRIGHT}[ Farm Can Claim At {timestamp_farm_end_at} ]{Style.RESET_ALL}")
+            else:
+                self.farm_start(token=account['token'])
+            # Play
+            while balance['data']['play_passes'] > 0:
+                self.game_play(token=account['token'])
+                balance['data']['play_passes'] -= 1
+            # Tasks
+            self.tasks_list(token=account['token'])
+        self.print_timestamp(f"{Fore.CYAN + Style.BRIGHT}[ Restarting Soon ]{Style.RESET_ALL}")
+        sleep((3 * 3600) + 10)
+        self.clear_terminal()
 
 
-                                else:
-                                    print(f"{Fore.RED+Style.BRIGHT}Failed to claim farming: {claim_response} {Style.RESET_ALL}", flush=True)
-                        else:
-                            print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Error. {farming} {Style.RESET_ALL}", flush=True)
-                    else:
-                        print(f"{Fore.GREEN+Style.BRIGHT}[ Farming ]: Error {farming} {Style.RESET_ALL}", flush=True)
-                    
-                    while tiket > 0:
-                        print(f"{Fore.GREEN+Style.BRIGHT}[ Game ]: Starting Game..", end="\r", flush=True)
-                        play, play_status = play_game(token)
-                        if play_status != 200:
-                            print(f"{Fore.RED+Style.BRIGHT}[ Game ]: Failed to start game!       {Style.RESET_ALL}", flush=True)
-                        else:
-                            print(f"{Fore.GREEN+Style.BRIGHT}[ Game ]: Game Started! {Style.RESET_ALL}                      ", flush=True)
-                            for _ in range(30):
-                                print(f"{random.choice([Fore.RED, Fore.GREEN, Fore.YELLOW, Fore.BLUE, Fore.MAGENTA, Fore.CYAN, Fore.WHITE])+Style.BRIGHT}[ Game ]: Playing game, waktu sisa {30 - _} detik {Style.RESET_ALL}", end="\r", flush=True)
-                                time.sleep(1)
-                            print(f"{Fore.YELLOW+Style.BRIGHT}[ Game ]: Game Berakhir! Claiming..                                       ", end="\r", flush=True)
-                            point = random.randint(400, 600)
-                            claim, claim_status = claim_game(token, point)
-                            if claim_status != 200:
-                                print(f"{Fore.RED+Style.BRIGHT}[ Game ]: Failed to claim game points! {Style.RESET_ALL}", flush=True)
-                            else:
-                                print(f"{Fore.GREEN+Style.BRIGHT}[ Game ]: Success. Mendapatkan {point} Poin {Style.RESET_ALL}                    ", flush=True)
-
-                            tiket -= 1
-            print(Fore.BLUE + Style.BRIGHT + f"\n==========SEMUA AKUN TELAH DI PROSES==========\n",  flush=True)    
-            for _ in range(1800):
-                minutes, seconds = divmod(1800 - _, 60)
-                print(f"{random.choice([Fore.RED, Fore.GREEN, Fore.YELLOW, Fore.BLUE, Fore.MAGENTA, Fore.CYAN, Fore.WHITE])+Style.BRIGHT}==== [ Semua akun telah diproses, Looping berikutnya {minutes} menit {seconds} detik ] ===={Style.RESET_ALL}", end="\r", flush=True)
-                time.sleep(1)         
-        except Exception as e:
-            time.sleep(5)
-            print(f"An error occurred: {str(e)}")
-            continue  # Add this line to skip to the next account
-       
-
-from datetime import datetime, timedelta, timezone
-start_time = datetime.now()
-def print_welcome_message():
-    print(r"""
-          
-█▀▀ █░█ ▄▀█ █░░ █ █▄▄ █ █▀▀
-█▄█ █▀█ █▀█ █▄▄ █ █▄█ █ ██▄
-          """)
-    print(Fore.GREEN + Style.BRIGHT + "Tomarket BOT")
-    print(Fore.CYAN + Style.BRIGHT + "Update Link: https://github.com/adearman/tomarket")
-    print(Fore.YELLOW + Style.BRIGHT + "Free Konsultasi Join Telegram Channel: https://t.me/ghalibie")
-    print(Fore.BLUE + Style.BRIGHT + "Buy me a coffee :) 0823 2367 3487 GOPAY / DANA")
-    print(Fore.RED + Style.BRIGHT + "NOT FOR SALE ! Ngotak dikit bang. Ngoding susah2 kau tinggal rename :)\n")
-    current_time = datetime.now()
-    up_time = current_time - start_time
-    days, remainder = divmod(up_time.total_seconds(), 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    print(Fore.CYAN + Style.BRIGHT + f"Up time bot: {int(days)} hari, {int(hours)} jam, {int(minutes)} menit, {int(seconds)} detik\n\n")
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    while True:
+        try:
+            init(autoreset=True)
+            tomarket = Tomarket()
+            tomarket.main()
+        except (Exception, requests.ConnectionError, requests.JSONDecodeError) as e:
+            tomarket.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ {str(e)} ]{Style.RESET_ALL}")
+            pass
+        except KeyboardInterrupt:
+            tomarket.print_timestamp(f"{Fore.RED + Style.BRIGHT}[ See You 👋🏻 ]{Style.RESET_ALL}")
+            sys.exit(0)
