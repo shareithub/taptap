@@ -1,11 +1,12 @@
 import requests
+import os
 import time
-from colorama import Fore, Style, init
+from colorama import Fore, Style
 import json
-from datetime import datetime, timedelta, timezone
-import argparse
+from datetime import datetime
 import urllib.parse
 import random
+
 # Function to parse user data from data.txt
 def parse_user_data(file_path):
     user_data_list = []
@@ -88,37 +89,6 @@ def get_farming_reward(user_data, token):
         print(f"Request Error: {e}")
         return None
     
-def get_ref_reward(user_data, token):
-    url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/reward'
-    headers['Authorization'] = token
-    payload = {"uid": user_data["id"]}
-
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None
-
-def claim_ref_reward(user_data, token):
-    url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/invite/balance'
-    headers['Authorization'] = token
-    payload = {"uid": user_data["id"]}
-
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()
-    except json.JSONDecodeError:
-        print(f"JSON Decode Error: Token Invalid")
-        return None
-    except requests.RequestException as e:
-        print(f"Request Error: {e}")
-        return None
 def claim_farming_reward(user_data, token):
     url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/reward/claim'
     headers['Authorization'] = token
@@ -137,6 +107,38 @@ def claim_farming_reward(user_data, token):
 
 def start_farming(user_data, token):
     url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/reward/farming'
+    headers['Authorization'] = token
+    payload = {"uid": user_data["id"]}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
+    except json.JSONDecodeError:
+        print(f"JSON Decode Error: Token Invalid")
+        return None
+    except requests.RequestException as e:
+        print(f"Request Error: {e}")
+        return None
+    
+def get_ref_reward(user_data, token):
+    url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/invite/balance'
+    headers['Authorization'] = token
+    payload = {"uid": user_data["id"]}
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()
+    except json.JSONDecodeError:
+        print(f"JSON Decode Error: Token Invalid")
+        return None
+    except requests.RequestException as e:
+        print(f"Request Error: {e}")
+        return None
+
+def claim_ref_reward(user_data, token):
+    url = 'https://tgapp-api.matchain.io/api/tgapp/v1/point/invite/claim'
     headers['Authorization'] = token
     payload = {"uid": user_data["id"]}
 
@@ -348,8 +350,18 @@ def convert_ts(seconds):
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return hours, minutes, seconds
+
+# Function to clear the terminal screen
+def clear_terminal():
+    if os.name == 'nt':  # For Windows
+        os.system('cls')
+    else:  # For Linux, Mac, etc.
+        os.system('clear')
+
 def main():
+    claim_reff_balance = input("Claim reff balance? (y/n): ").strip().upper()
     auto_clear_task = input("Auto clear and claim Task? (y/n): ").strip().upper()
+    buy_booster = input("Buy booster if available? (y/n): ").strip().upper()
     auto_play_game = input("Auto play game? (y/n): ").strip().upper()
 
     if auto_play_game == "Y":
@@ -368,8 +380,9 @@ def main():
                 print(Fore.RED + Style.BRIGHT + "Masukan harus berupa angka.")
        
     while True:
-        print_welcome_message()
         try:
+            clear_terminal()
+            print_welcome_message()
             for line, user_data in user_data_list:
                 print(Fore.CYAN + Style.BRIGHT + f"Getting token", end="\r", flush=True)
                 time.sleep(1)
@@ -460,25 +473,28 @@ def main():
                         else:
                             print(Fore.YELLOW + Style.BRIGHT + f"[ Farming ]: Still Farming         ")
 
-                        print(Fore.YELLOW + Style.BRIGHT + f"[ Reff Balance ]: Checking..", end="\r", flush=True)
-                        time.sleep(2)
-                        cek_reff_balance = get_ref_reward(user_data,token)
-                        if cek_reff_balance is None or 'data' not in farming_balance:
-                            print(Fore.RED + Style.BRIGHT + f"[ Reff Balance ]: Gagal mendapatkan data {nickname}!", flush=True)
+                        if claim_reff_balance == 'Y':
+                            print(Fore.YELLOW + Style.BRIGHT + f"[ Reff Balance ]: Checking..", end="\r", flush=True)
+                            time.sleep(2)
+                            cek_reff_balance = get_ref_reward(user_data, token)
+                            
+                            if cek_reff_balance is None or 'data' not in cek_reff_balance:
+                                print(Fore.RED + Style.BRIGHT + f"[ Reff Balance ]: Gagal mendapatkan data {nickname}!", flush=True)
+                            else:
+                                saldo = cek_reff_balance['data'].get('balance', 0)
+                                saldo_view = format_balance(saldo)
+                                print(Fore.GREEN + Style.BRIGHT + f"[ Reff Balance ]: Reward {saldo_view} Point          ", flush=True)
+                                
+                                if int(saldo_view) > 0:
+                                    claim_reff = claim_ref_reward(user_data, token)
+                                    if claim_reff:
+                                        saldo_claim = claim_reff.get('data')
+                                        saldo_claim_view = format_balance(saldo_claim)
+                                        print(Fore.GREEN + Style.BRIGHT + f"[ Reff Balance ]: Claimed {saldo_claim_view} Point            ", flush=True)
+                                    else:
+                                        print(Fore.RED + Style.BRIGHT + f"[ Reff Balance ]: Failed to claim reff balance!          ", flush=True)
                         else:
-                            saldo = cek_reff_balance['data'].get('balance', 0)
-                            saldo_view = format_balance(saldo)
-                            print(Fore.GREEN + Style.BRIGHT + f"[ Reff Balance ]: Reward {saldo_view} Point          ", flush=True)
-                            if int(saldo_view) > 0:
-                                claim_reff = claim_ref_reward(user_data,token)
-                                if claim_reff:
-                                    saldo_claim = claim_reff.get('data')
-                                    saldo_claim_view = format_balance(saldo_claim)
-                                    print(Fore.GREEN + Style.BRIGHT + f"[ Reff Balance ]: Claimed {saldo_claim_view} Point            ", flush=True)
-                                else:
-                                    print(Fore.RED + Style.BRIGHT + f"[ Reff Balance ]: Failed to claim reff balance!          ", flush=True)
-
-
+                            print(Fore.YELLOW + Style.BRIGHT + f"[ Reff Balance ]: Skipping Claim Reff Balance", flush=True)
 
                         if auto_clear_task == "Y":
                             print(Fore.GREEN + Style.BRIGHT + f"[ Task ]: Checking..", end="\r", flush=True)
@@ -486,9 +502,11 @@ def main():
                             if get_task_list:
                                 task_list = get_task_list.get('data', {})
                                 task_normal = task_list.get('Tasks', [])
-                                task_extra = task_list.get('Extra Tasks', [])
+                                all_tasks_completed = True
+                                # task_extra = task_list.get('Extra Tasks', [])
                                 for task in task_normal:
                                     if not task['complete']:
+                                        all_tasks_completed = False
                                         print(Fore.GREEN  + f"[ Task ]: Finishing task {task['name']}", end="\r" , flush=True)
                                         time.sleep(1)
                                         complete_task_result = complete_task(user_data,task['name'],token)   
@@ -506,38 +524,55 @@ def main():
                                                  print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to claim task {task['name']}                  ", flush=True)
                                         else:
                                             print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to finishing {task['name']}            ", flush=True)
-                                for extra in task_extra:
-                                    if not extra['complete']:
-                                        print(Fore.GREEN + Style.BRIGHT + f"[ Task ]: Finishing task {extra['name']}", end="\r" , flush=True)
-                                        time.sleep(1)
-                                        complete_task_result = complete_task(user_data,extra['name'],token)   
-                                        if complete_task_result:
-                                            result = complete_task_result.get('data', False)
-                                            if result:
-                                                print(Fore.GREEN + Style.BRIGHT + f"[ Task ]: Claiming task {extra['name']}               ", flush=True)
-                                                time.sleep(1)
-                                                claim_task_result = claim_task(user_data,extra['name'],token)
-                                                if claim_task_result:
-                                                    print(f"{Fore.GREEN+Style.BRIGHT}[ Task ]: Complete and Claimed {extra['name']}               " , flush=True)
-                                                else:
-                                                    print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to claim task {extra['name']}                  ", flush=True)
-                                            else:
-                                                 print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to claim task {extra['name']}                  ", flush=True)
-                                        else:
-                                            print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to finishing {extra['name']}            ", flush=True)
+
+                                # Jika semua task sudah selesai
+                                if all_tasks_completed:
+                                    print(f"{Fore.GREEN+Style.BRIGHT}[ Task ]: All Tasks Completed              ", flush=True)
+                                # for extra in task_extra:
+                                #     if not extra['complete']:
+                                #         print(Fore.GREEN + Style.BRIGHT + f"[ Task ]: Finishing task {extra['name']}", end="\r" , flush=True)
+                                #         time.sleep(1)
+                                #         complete_task_result = complete_task(user_data,extra['name'],token)   
+                                #         if complete_task_result:
+                                #             result = complete_task_result.get('data', False)
+                                #             if result:
+                                #                 print(Fore.GREEN + Style.BRIGHT + f"[ Task ]: Claiming task {extra['name']}               ", flush=True)
+                                #                 time.sleep(1)
+                                #                 claim_task_result = claim_task(user_data,extra['name'],token)
+                                #                 if claim_task_result:
+                                #                     print(f"{Fore.GREEN+Style.BRIGHT}[ Task ]: Complete and Claimed {extra['name']}               " , flush=True)
+                                #                 else:
+                                #                     print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to claim task {extra['name']}                  ", flush=True)
+                                #             else:
+                                #                  print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to claim task {extra['name']}                  ", flush=True)
+                                #         else:
+                                #             print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed to finishing {extra['name']}            ", flush=True)
                             else:
                                 print(f"{Fore.RED+Style.BRIGHT}[ Task ]: Failed Get List Task          ", flush=True)
-                        booster_status = check_boost_status(token)
-                        if booster_status:
-                            for booster in booster_status.get('data', []):
-                                if booster['name'] == 'Game Booster' and booster['current_count'] < booster['task_count']:
-                                    print(Fore.YELLOW + Style.BRIGHT + f"[ Booster ]: Purchasing Booster..", end="\r", flush=True)
-                                    time.sleep(2)
-                                    purchase_booster = purchase_boost(token, booster['uid'])
-                                    if purchase_booster:
-                                        print(Fore.GREEN + Style.BRIGHT + f"[ Booster ]: Booster Purchased!           ", flush=True)
-                                    else:
-                                        print(Fore.RED + Style.BRIGHT + f"[ Booster ]: Failed to purchase booster!           ", flush=True)
+                        else:
+                            print(Fore.YELLOW + Style.BRIGHT + f"[ Task ]: Skipping Auto Clear and Claim Task", flush=True)
+
+                        if buy_booster == 'Y':
+                            print(Fore.YELLOW + Style.BRIGHT + f"[ Booster ]: Checking booster status..", end="\r", flush=True)
+                            time.sleep(2)
+                            booster_status = check_boost_status(token)
+                            
+                            if booster_status:
+                                for booster in booster_status.get('data', []):
+                                    if booster['name'] == 'Game Booster' and booster['current_count'] < booster['task_count']:
+                                        print(Fore.YELLOW + Style.BRIGHT + f"[ Booster ]: Purchasing Booster..", end="\r", flush=True)
+                                        time.sleep(2)
+                                        purchase_booster = purchase_boost(token, booster['uid'])
+                                        if purchase_booster:
+                                            print(Fore.GREEN + Style.BRIGHT + f"[ Booster ]: Booster Purchased!           ", flush=True)
+                                        else:
+                                            print(Fore.RED + Style.BRIGHT + f"[ Booster ]: Failed to purchase booster!           ", flush=True)
+                            else:
+                                print(Fore.RED + Style.BRIGHT + f"[ Booster ]: Failed to check booster status!          ", flush=True)
+                        else:
+                            print(Fore.YELLOW + Style.BRIGHT + f"[ Booster ]: Skipping Booster Purchase", flush=True)
+
+
                         print(Fore.GREEN + Style.BRIGHT + f"[ Game ]: Checking ticket..", end="\r", flush=True)
                         time.sleep(2)
                         tiket_response = check_tiket(token)
@@ -590,7 +625,8 @@ def main():
                                                  break
                                     else:
                                         print(Fore.RED + Style.BRIGHT + f"[ Game ]: Failed to play game            ", flush=True)
-
+                            else:
+                                print(Fore.YELLOW + Style.BRIGHT + f"[ Game ]: Skipping Auto Play Game", flush=True)
                         else:
                             print(f"{Fore.RED+Style.BRIGHT}[ Game ]: Failed Get Tiket            ", flush=True)
                 else:
@@ -604,24 +640,14 @@ def main():
             time.sleep(5)
             print(f"An error occurred: {str(e)}")
 
-
 def print_welcome_message():
-    print(r"""
-          
-█▀▀ █░█ ▄▀█ █░░ █ █▄▄ █ █▀▀
-█▄█ █▀█ █▀█ █▄▄ █ █▄█ █ ██▄
-          """)
-    print(Fore.GREEN + Style.BRIGHT + "MatchQuest BOT")
-    print(Fore.CYAN + Style.BRIGHT + "Update Link: https://github.com/adearman/matchquest")
+    print(Fore.RED + Style.BRIGHT + "█▀▀ " + Fore.YELLOW + "█░█ " + Fore.RED + "▄▀█ " + Fore.YELLOW + "█░░ " + Fore.RED + "█ " + Fore.YELLOW + "█▄▄ " + Fore.RED + "█ " + Fore.YELLOW + "█▀▀")
+    print(Fore.YELLOW + "█▄█ " + Fore.RED + "█▀█ " + Fore.YELLOW + "█▀█ " + Fore.RED + "█▄▄ " + Fore.YELLOW + "█ " + Fore.RED + "█▄█ " + Fore.YELLOW + "█ " + Fore.RED + "██▄")
+    print(Fore.CYAN + Style.BRIGHT + "\nMatchQuest BOT")
+    print(Fore.CYAN + Style.BRIGHT + "Update Link: https://github.com/adearmanwijaya/")
     print(Fore.YELLOW + Style.BRIGHT + "Free Konsultasi Join Telegram Channel: https://t.me/ghalibie")
-    print(Fore.BLUE + Style.BRIGHT + "Buy me a coffee :) 0823 2367 3487 GOPAY / DANA")
-    print(Fore.RED + Style.BRIGHT + "NOT FOR SALE ! Ngotak dikit bang. Ngoding susah2 kau tinggal rename :)")
-    current_time = datetime.now()
-    up_time = current_time - start_time
-    days, remainder = divmod(up_time.total_seconds(), 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    print(Fore.CYAN + Style.BRIGHT + f"Up time bot: {int(days)} hari, {int(hours)} jam, {int(minutes)} menit, {int(seconds)} detik\n\n")
+    print(Fore.YELLOW + Style.BRIGHT + "Buy me a coffee :) 0823 2367 3487 GOPAY / DANA / BINANCE ID 248613229")
+    print(Fore.YELLOW + Style.BRIGHT + "NOT FOR SALE ! Ngotak dikit bang. Ngoding susah2 kau tinggal rename :)\n\n")
 
 if __name__ == "__main__":
     main()
