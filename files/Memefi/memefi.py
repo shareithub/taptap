@@ -1,10 +1,11 @@
-import http.client
+import aiohttp
 import asyncio
 import json
+import os
+import pytz
 import random
 import string
 import time
-import base64
 from datetime import datetime
 from urllib.parse import unquote
 from utils.headers import headers_set
@@ -12,59 +13,32 @@ from utils.queries import QUERY_USER, QUERY_LOGIN, MUTATION_GAME_PROCESS_TAPS_BA
 from utils.queries import QUERY_TASK_VERIF, QUERY_TASK_COMPLETED, QUERY_GET_TASK, QUERY_TASK_ID, QUERY_GAME_CONFIG
 
 url = "https://api-gw-tg.memefi.club/graphql"
-def load_proxies():
-    with open('proxy.txt', 'r') as file:
-        proxies = [line.strip() for line in file.readlines()]
-    return proxies
-
-proxies = load_proxies()
 
 # HANDLE SEMUA ERROR TAROH DISINI BANG SAFE_POST
-def safe_post(url, headers, json_payload):
+async def safe_post(session, url, headers, json_payload):
     retries = 5
-    timeout = 5  # Timeout in seconds for each connection attempt
     for attempt in range(retries):
-        try:
-            if proxies:
-                proxy = random.choice(proxies)
-                if '@' in proxy:
-                    user_pass, proxy_ip = proxy.split('@')
-                    proxy_auth = base64.b64encode(user_pass.encode()).decode()
-                else:
-                    proxy_ip = proxy
-                    proxy_auth = None
-
-                conn = http.client.HTTPSConnection(proxy_ip, timeout=timeout)
-                if proxy_auth:
-                    conn.set_tunnel(url, 443, headers={"Proxy-Authorization": f"Basic {proxy_auth}"})
-                else:
-                    conn.set_tunnel(url, 443)
+        async with session.post(url, headers=headers, json=json_payload) as response:
+            if response.status == 200:
+                return await response.json()  # Return the JSON response if successful
             else:
-                conn = http.client.HTTPSConnection(url, timeout=timeout)
-            
-            payload = json.dumps(json_payload)
-            conn.request("POST", "/graphql", payload, headers)
-            res = conn.getresponse()
-            response_data = res.read().decode("utf-8")
-            if res.status == 200:
-                return json.loads(response_data)  # Return the JSON response if successful
-            else:
-                print(f"❌ Gagal dengan status {res.status}, mencoba lagi ")
-        except (http.client.HTTPException, TimeoutError) as e:
-            print(f"❌ Error: {e}, mencoba lagi ")
-        if attempt < retries - 1:  # Jika ini bukan percobaan terakhir, tunggu sebelum mencoba lagi
-            time.sleep(10)
-        else:
-            print("❌ Gagal setelah beberapa percobaan. Memulai ulang...")
-            return None
+                print(f"❌ Gagal dengan status {response.status}, mencoba lagi ")
+                if attempt < retries - 1:  # Jika ini bukan percobaan terakhir, tunggu sebelum mencoba lagi
+                    await asyncio.sleep(10)
+                else:
+                    print("❌ Gagal setelah beberapa percobaan. Memulai ulang...")
+                    return None
     return None
+
+
 
 def generate_random_nonce(length=52):
     characters = string.ascii_letters + string.digits
     return ''.join(random.choice(characters) for _ in range(length))
 
+
 # Mendapatkan akses token
-def fetch(account_line):
+async def fetch(account_line):
     with open('query_id.txt', 'r') as file:
         lines = file.readlines()
         raw_data = lines[account_line - 1].strip()
@@ -77,8 +51,8 @@ def fetch(account_line):
 
     user_data_dict = json.loads(unquote(user_data))
 
-    url = 'api-gw-tg.memefi.club'
-    headers = headers_set.copy()  # Use headers from utils/headers.py
+    url = 'https://api-gw-tg.memefi.club/graphql'
+    headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     data = {
         "operationName": "MutationTelegramUserLogin",
         "variables": {
@@ -95,79 +69,87 @@ def fetch(account_line):
                     "username": user_data_dict.get("username", "Username gak diset"),
                     "language_code": user_data_dict["language_code"],
                     "version": "7.2",
-                    "platform": "ios",
-                    "is_premium": user_data_dict.get("is_premium", False)
+                    "platform": "ios"
                 }
             }
         },
-        "query": "mutation MutationTelegramUserLogin($webAppData: TelegramWebAppDataInput!) {\n  telegramUserLogin(webAppData: $webAppData) {\n    access_token\n    __typename\n  }\n}"
+        "query": QUERY_LOGIN
     }
 
-    conn = http.client.HTTPSConnection(url)
-    payload = json.dumps(data)
-    conn.request("POST", "/graphql", payload, headers)
-    res = conn.getresponse()
-    response_data = res.read().decode("utf-8")
-
-    if res.status == 200:
-        try:
-            json_response = json.loads(response_data)
-            if 'errors' in json_response:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=data) as response:
+            try:
+                json_response = await response.json()
+                if 'errors' in json_response:
+                    # print("Query ID Salah")
+                    return None
+                else:
+                    access_token = json_response['data']['telegramUserLogin']['access_token']
+                    return access_token
+            except aiohttp.ContentTypeError:
+                print("Failed to decode JSON response")
                 return None
-            else:
-                access_token = json_response['data']['telegramUserLogin']['access_token']
-                return access_token
-        except json.JSONDecodeError:
-            print("Failed to decode JSON response")
-            return None
-    else:
-        return None
 
 # Cek akses token
-def cek_user(index):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
+async def cek_user(index):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
 
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     headers['Authorization'] = f'Bearer {access_token}'
-
+    
     json_payload = {
         "operationName": "QueryTelegramUserMe",
         "variables": {},
         "query": QUERY_USER
     }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=json_payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                if 'errors' in response_data:
+                    print(f"❌ Gagal Query ID Salah")
+                    return None
+                else:
+                    user_data = response_data['data']['telegramUserMe']
+                    return user_data  # Mengembalikan hasil response
+            else:
+                print(response)
+                print(f"❌ Gagal dengan status {response.status}, mencoba lagi...")
+                return None  # Mengembalikan None jika terjadi error
+            
+async def activate_energy_recharge_booster(index,headers):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
 
-    response = safe_post(url, headers, json_payload)
-    if response and 'errors' not in response:
-        user_data = response['data']['telegramUserMe']
-        return user_data  # Mengembalikan hasil response
-    else:
-        print(f"❌ Gagal dengan status {response}")
-        return None  # Mengembalikan None jika terjadi error
-
-def activate_energy_recharge_booster(index, headers):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
-
+    access_token = await fetch(index + 1)
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     headers['Authorization'] = f'Bearer {access_token}'
-
+    
     recharge_booster_payload = {
-        "operationName": "telegramGameActivateBooster",
-        "variables": {"boosterType": "Recharge"},
-        "query": QUERY_BOOSTER
+            "operationName": "telegramGameActivateBooster",
+            "variables": {"boosterType": "Recharge"},
+            "query": QUERY_BOOSTER
     }
-
-    response = safe_post(url, headers, recharge_booster_payload)
-    if response and 'data' in response and response['data'] and 'telegramGameActivateBooster' in response['data']:
-        new_energy = response['data']['telegramGameActivateBooster']['currentEnergy']
-        print(f"\n🔋 Energi terisi. Energi saat ini: {new_energy}")
-    else:
-        print("❌ Gagal mengaktifkan Recharge Booster: Data tidak lengkap atau tidak ada.")
-
-def activate_booster(index, headers):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=recharge_booster_payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                if response_data and 'data' in response_data and response_data['data'] and 'telegramGameActivateBooster' in response_data['data']:
+                    new_energy = response_data['data']['telegramGameActivateBooster']['currentEnergy']
+                    print(f"\n🔋 Energi terisi. Energi saat ini: {new_energy}")
+                else:
+                    print("❌ Gagal mengaktifkan Recharge Booster: Data tidak lengkap atau tidak ada.")
+            else:
+                # print(response)
+                print(f"❌ Gagal dengan status {response.status}, mencoba lagi..." + response)
+                return None  # Mengembalikan None jika terjadi error
+    
+async def activate_booster(index, headers):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
     print("\r🚀 Mengaktifkan Turbo Boost ... ", end="", flush=True)
 
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
@@ -178,60 +160,62 @@ def activate_booster(index, headers):
         "variables": {"boosterType": "Turbo"},
         "query": QUERY_BOOSTER
     }
-
-    response = safe_post(url, headers, recharge_booster_payload)
-    if response and 'data' in response:
-        current_health = response['data']['telegramGameActivateBooster']['currentBoss']['currentHealth']
-        current_level = response['data']['telegramGameActivateBooster']['currentBoss']['level']
-        if current_health == 0:
-            print("\nBos telah dikalahkan, mengatur bos berikutnya...")
-            set_next_boss(index, headers)
-        else:
-            if god_mode == 'y':
-                total_hit = 500000000
-            else:
-                total_hit = 500000
-            tap_payload = {
-                "operationName": "MutationGameProcessTapsBatch",
-                "variables": {
-                    "payload": {
-                        "nonce": generate_random_nonce(),
-                        "tapsCount": total_hit
-                    }
-                },
-                "query": MUTATION_GAME_PROCESS_TAPS_BATCH
-            }
-            for _ in range(50):
-                tap_result = submit_taps(index, tap_payload)
-                if tap_result is not None:
-                    if 'data' in tap_result and 'telegramGameProcessTapsBatch' in tap_result['data']:
-                        tap_data = tap_result['data']['telegramGameProcessTapsBatch']
-                        if tap_data['currentBoss']['currentHealth'] == 0:
-                            print("\nBos telah dikalahkan, mengatur bos berikutnya...")
-                            set_next_boss(index, headers)
-                            print(f"\rTapped ✅ Coin: {tap_data['coinsAmount']}, Monster ⚔️: {tap_data['currentBoss']['currentHealth']} - {tap_data['currentBoss']['maxHealth']}    ")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=recharge_booster_payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                current_health = response_data['data']['telegramGameActivateBooster']['currentBoss']['currentHealth']
+                if current_health == 0:
+                    print("\nBos telah dikalahkan, mengatur bos berikutnya...")
+                    await set_next_boss(index, headers)
                 else:
-                    print(f"❌ Gagal dengan status {tap_result}, mencoba lagi...")
-    else:
-        print(f"❌ Gagal dengan status {response}, mencoba lagi...")
+                    if god_mode == 'y':
+                        total_hit = 50000000
+                    else:
+                        total_hit = 50000
+                    tap_payload = {
+                        "operationName": "MutationGameProcessTapsBatch",
+                        "variables": {
+                            "payload": {
+                                "nonce": generate_random_nonce(),
+                                "tapsCount": total_hit
+                            }
+                        },
+                        "query": MUTATION_GAME_PROCESS_TAPS_BATCH
+                    }
+                    for _ in range(25):
+                        tap_result = await submit_taps(index, tap_payload)
+                        if tap_result is not None:
+                            if 'data' in tap_result and 'telegramGameProcessTapsBatch' in tap_result['data']:
+                                tap_data = tap_result['data']['telegramGameProcessTapsBatch']
+                                if tap_data['currentBoss']['currentHealth'] == 0:
+                                    print("\nBos telah dikalahkan, mengatur bos berikutnya...")
+                                    await set_next_boss(index, headers)
+                                    print(f"\rTapped ✅ Coin: {tap_data['coinsAmount']}, Monster ⚔️: {tap_data['currentBoss']['currentHealth']} - {tap_data['currentBoss']['maxHealth']}    ")
+                        else:
+                            print(f"❌ Gagal dengan status {tap_result}, mencoba lagi...")
+            else:
+                print(f"❌ Gagal dengan status {response.status}, mencoba lagi...")
+                return None  # Mengembalikan None jika terjadi error
 
-def submit_taps(index, json_payload):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
+async def submit_taps(index, json_payload):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
 
     headers = headers_set.copy()
     headers['Authorization'] = f'Bearer {access_token}'
 
-    response = safe_post(url, headers, json_payload)
-    if response:
-        return response  # Pastikan mengembalikan data yang sudah diurai
-    else:
-        print(f"❌ Gagal dengan status {response}, mencoba lagi...")
-        return None  # Mengembalikan None jika terjadi error
-
-def set_next_boss(index, headers):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=json_payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                return response_data  # Pastikan mengembalikan data yang sudah diurai
+            else:
+                print(f"❌ Gagal dengan status {response}, mencoba lagi...")
+                return None  # Mengembalikan None jika terjadi error
+async def set_next_boss(index, headers):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
 
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     headers['Authorization'] = f'Bearer {access_token}'
@@ -241,36 +225,50 @@ def set_next_boss(index, headers):
         "query": QUERY_NEXT_BOSS
     }
 
-    response = safe_post(url, headers, boss_payload)
-    if response and 'data' in response:
-        print("✅ Berhasil ganti bos.", flush=True)
-    else:
-        print("❌ Gagal ganti bos.", flush=True)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=boss_payload) as response:
+            if response.status == 200:
+                print("✅ Berhasil ganti bos.", flush=True)
+            else:
+                print("❌ Gagal ganti bos.", flush=True)
+                 # Mengembalikan respons error
 
 # cek stat
-def cek_stat(index, headers):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
+async def cek_stat(index,headers):
+    access_token = await fetch(index + 1)
+    url = "https://api-gw-tg.memefi.club/graphql"
 
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     headers['Authorization'] = f'Bearer {access_token}'
-
+    
     json_payload = {
         "operationName": "QUERY_GAME_CONFIG",
         "variables": {},
         "query": QUERY_GAME_CONFIG
     }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=json_payload) as response:
+            if response.status == 200:
+                response_data = await response.json()
+                if 'errors' in response_data:
+                    return None
+                else:
+                    user_data = response_data['data']['telegramGameGetConfig']
+                    return user_data
+            else:
+                print(response)
+                print(f"❌ Gagal dengan status {response.status}, mencoba lagi...")
+                return None, None  # Mengembalikan None jika terjadi error
 
-    response = safe_post(url, headers, json_payload)
-    if response and 'errors' not in response:
-        user_data = response['data']['telegramGameGetConfig']
-        return user_data
-    else:
-        print(f"❌ Gagal dengan status {response}")
-        return None  # Mengembalikan None jika terjadi error
 
-def check_and_complete_tasks(index, headers):
-    access_token = fetch(index + 1)
+
+
+async def check_and_complete_tasks(index, headers):
+    # if tasks_completed.get(account_number, False):
+    #     print(f"[ Akun {account_number + 1} ] Semua tugas telah selesai. Tidak perlu cek lagi. ✅")
+    #     return True
+    access_token = await fetch(index + 1)
     headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
     headers['Authorization'] = f'Bearer {access_token}'
     task_list_payload = {
@@ -279,82 +277,98 @@ def check_and_complete_tasks(index, headers):
         "query": QUERY_GET_TASK
     }
 
-    response = safe_post(url, headers, task_list_payload)
-    if response and 'errors' not in response:
-        tasks = response
-    else:
-        print(f"❌ Gagal dengan status {response}")
-        return False
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=task_list_payload, headers=headers) as response:
+            if response.status != 200:
+                # Menampilkan status dan respons jika bukan 200 OK
+                print(f"❌ Gagal dengan status {response.status}")
+                print(await response.text())  # Menampilkan respons teks untuk debugging
+                return False
 
-    all_completed = all(task['status'] == 'Completed' for task in tasks['data']['campaignTasks'])
-    if all_completed:
-        print(f"\r[ Akun {index + 1} ] Semua tugas telah selesai. ✅            ", flush=True)
-        return True
+            try:
+                tasks = await response.json()
+            except aiohttp.ContentTypeError:
+                print("Gagal mengurai JSON, cek respons server.")
+                return False
 
-    print(f"\n[ Akun {index + 1} ]\nList Task:\n")
-    for task in tasks['data']['campaignTasks']:
-        print(f"{task['name']} | {task['status']}")
+            # Lanjutkan dengan logika yang ada jika tidak ada error
+            all_completed = all(task['status'] == 'Completed' for task in tasks['data']['campaignTasks'])
+            if all_completed:
+                print(f"\r[ Akun {index + 1} ] Semua tugas telah selesai. ✅            ",flush=True)
+                return True
 
-        if task['name'] == "Follow telegram channel" and task['status'] == "Pending":
-            print(f"⏩ Skipping task: {task['name']}")
-            continue  # Skip task jika nama task adalah "Follow telegram channel" dan statusnya "Pending"
 
-        if task['status'] == "Pending":
-            print(f"\🔍 Viewing task: {task['name']}", end="", flush=True)
+            print(f"\n[ Akun {index + 1} ]\nList Task:\n")
+            for task in tasks['data']['campaignTasks']:
+                print(f"{task['name']} | {task['status']}")
 
-            view_task_payload = {"operationName": "GetTaskById", "variables": {"taskId": task['id']}, "query": "fragment FragmentCampaignTask on CampaignTaskOutput {\n  id\n  name\n  description\n  status\n  type\n  position\n  buttonText\n  coinsRewardAmount\n  link\n  userTaskId\n  isRequired\n  iconUrl\n  __typename\n}\n\nquery GetTaskById($taskId: String!) {\n  campaignTaskGetConfig(taskId: $taskId) {\n    ...FragmentCampaignTask\n    __typename\n  }\n}"}
-            print(view_task_payload)
-            view_response = safe_post(url, headers, view_task_payload)
-            if 'errors' in view_response:
-                print(f"\r❌ Gagal mendapatkan detail task: {task['name']}")
-                print(view_response)
-            else:
-                task_details = view_response['data']['campaignTaskGetConfig']
-                print(f"\r🔍 Detail Task: {task_details['name']}", end="", flush=True)
+                if task['name'] == "Follow telegram channel" and task['status'] == "Pending":
+                    print(f"⏩ Skipping task: {task['name']}")
+                    continue  # Skip task jika nama task adalah "Follow telegram channel" dan statusnya "Pending"
 
-  
+                if task['status'] == "Pending":
+                    print(f"\🔍 Viewing task: {task['name']}", end="", flush=True)
+                 
+                    view_task_payload = {"operationName":"GetTaskById","variables":{"taskId":task['id']},"query":"fragment FragmentCampaignTask on CampaignTaskOutput {\n  id\n  name\n  description\n  status\n  type\n  position\n  buttonText\n  coinsRewardAmount\n  link\n  userTaskId\n  isRequired\n  iconUrl\n  __typename\n}\n\nquery GetTaskById($taskId: String!) {\n  campaignTaskGetConfig(taskId: $taskId) {\n    ...FragmentCampaignTask\n    __typename\n  }\n}"}
+                    print(view_task_payload)
+                    async with session.post(url, json=view_task_payload, headers=headers) as view_response:
+                        view_result = await view_response.json()
 
-            print(f"\r🔍 Verifikasi task: {task['name']}                                                                ", end="", flush=True)
-            verify_task_payload = {
-                "operationName": "CampaignTaskToVerification",
-                "variables": {"userTaskId": task['userTaskId']},
-                "query": QUERY_TASK_VERIF
-            }
-            verify_response = safe_post(url, headers, verify_task_payload)
-            if 'errors' not in verify_response:
-                print(f"\r✅ {task['name']} | Moved to Verification", flush=True)
-            else:
-                print(f"\r❌ {task['name']} | Failed to move to Verification", flush=True)
-                print(verify_response)
+                        if 'errors' in view_result:
+                            print(f"\r❌ Gagal mendapatkan detail task: {task['name']}")
+                            print(view_result)
+                        else:
+                            task_details = view_result['data']['campaignTaskGetConfig']
+                            print(f"\r🔍 Detail Task: {task_details['name']}", end="", flush=True)
 
-         
+                    await asyncio.sleep(2)  # Jeda 2 detik setelah melihat detail
 
-    # Cek ulang task setelah memindahkan ke verification
-    updated_tasks = safe_post(url, headers, task_list_payload)
-    print("\nUpdated Task List After Verification:\n")
-    for task in updated_tasks['data']['campaignTasks']:
-        print(f"{task['name']} | {task['status']}")
-        if task['status'] == "Verification":
-            print(f"\r🔥 Menyelesaikan task: {task['name']}", end="", flush=True)
-            complete_task_payload = {
-                "operationName": "CampaignTaskCompleted",
-                "variables": {"userTaskId": task['userTaskId']},
-                "query": QUERY_TASK_COMPLETED
-            }
-            complete_response = safe_post(url, headers, complete_task_payload)
-            if 'errors' not in complete_response:
-                print(f"\r✅ {task['name']} | Completed                         ", flush=True)
-            else:
-                print(f"\r❌ {task['name']} | Failed to complete            ", flush=True)
+                    print(f"\r🔍 Verifikasi task: {task['name']}                                                                ", end="", flush=True)
+                    verify_task_payload = {
+                        "operationName": "CampaignTaskToVerification",
+                        "variables": {"userTaskId": task['userTaskId']},
+                        "query": QUERY_TASK_VERIF
+                    }
+                    async with session.post(url, json=verify_task_payload, headers=headers) as verify_response:
+                        verify_result = await verify_response.json()
 
-   
+                        if 'errors' not in verify_result:
+                            print(f"\r✅ {task['name']} | Moved to Verification", flush=True)
+                        else:
+                            print(f"\r❌ {task['name']} | Failed to move to Verification", flush=True)
+                            print(verify_result)
+
+                    await asyncio.sleep(2)  # Jeda 2 detik setelah verifikasi
+
+            # Cek ulang task setelah memindahkan ke verification
+            async with session.post(url, json=task_list_payload, headers=headers) as response:
+                updated_tasks = await response.json()
+
+                print("\nUpdated Task List After Verification:\n")
+                for task in updated_tasks['data']['campaignTasks']:
+                    print(f"{task['name']} | {task['status']}")
+                    if task['status'] == "Verification":
+                        print(f"\r🔥 Menyelesaikan task: {task['name']}", end="", flush=True)
+                        complete_task_payload = {
+                            "operationName": "CampaignTaskCompleted",
+                            "variables": {"userTaskId": task['userTaskId']},
+                            "query": QUERY_TASK_COMPLETED
+                        }
+                        async with session.post(url, json=complete_task_payload, headers=headers) as complete_response:
+                            complete_result = await complete_response.json()
+
+                            if 'errors' not in complete_result:
+                                print(f"\r✅ {task['name']} | Completed                         ", flush=True)
+                            else:
+                                print(f"\r❌ {task['name']} | Failed to complete            ", flush=True)
+                    
+                    await asyncio.sleep(3)  # Jeda 3 detik setelah menyelesaikan tugas
 
     return False
 
-def main():
+async def main():
     print("Starting Memefi bot...")
     print("\r Mendapatkan list akun valid...", end="", flush=True)
-  
     while True:
         with open('query_id.txt', 'r') as file:
             lines = file.readlines()
@@ -362,7 +376,7 @@ def main():
         # Kumpulkan informasi akun terlebih dahulu
         accounts = []
         for index, line in enumerate(lines):
-            result = cek_user(index)
+            result = await cek_user(index)
             if result is not None:
                 first_name = result.get('firstName', 'Unknown')
                 last_name = result.get('lastName', 'Unknown')
@@ -372,19 +386,20 @@ def main():
                 print(f"❌ Akun {index + 1}: Token tidak valid atau terjadi kesalahan")
 
         # Menampilkan daftar akun
-        print("\rList akun:                                   ", flush=True)
+        print("\rList akun:                                   ",flush=True)
         for index, _, first_name, last_name, league in accounts:
             print(f"✅ [ Akun {first_name} {last_name} ] | League 🏆 {league}")
 
         # Setelah menampilkan semua akun, mulai memeriksa tugas
         for index, result, first_name, last_name, league in accounts:
+            
             print(f"\r[ Akun {index + 1} ] {first_name} {last_name} memeriksa task...", end="", flush=True)
             headers = {'Authorization': f'Bearer {result}'}
             if cek_task_enable == 'y':
-                check_and_complete_tasks(index, headers)
+                await check_and_complete_tasks(index, headers)
             else:
                 print(f"\r\n[ Akun {index + 1} ] {first_name} {last_name} Cek task skipped\n", flush=True)
-            stat_result = cek_stat(index, headers)
+            stat_result = await cek_stat(index, headers)
 
             if stat_result is not None:
                 user_data = stat_result
@@ -394,137 +409,70 @@ def main():
                     f"Level 🔫 {user_data['weaponLevel']} 🔋 {user_data['energyLimitLevel']} ⚡ {user_data['energyRechargeLevel']} 🤖 {user_data['tapBotLevel']}\n"
                     f"Boss 👾 {user_data['currentBoss']['level']} ❤️ {user_data['currentBoss']['currentHealth']} - {user_data['currentBoss']['maxHealth']}\n"
                     f"Free 🚀 {user_data['freeBoosts']['currentTurboAmount']} 🔋 {user_data['freeBoosts']['currentRefillEnergyAmount']}\n"
-                )
+                        )
                 print(output, end="", flush=True)
                 level_bos = user_data['currentBoss']['level']
                 darah_bos = user_data['currentBoss']['currentHealth']
 
+    
+
+                               
+                if level_bos == 11 and darah_bos == 0:
+                    print(f"\n=================== {first_name} {last_name} TAMAT ====================")
+                    continue
                 if darah_bos == 0:
                     print("\nBos telah dikalahkan, mengatur bos berikutnya...", flush=True)
-                    set_next_boss(index, headers)
+                    await set_next_boss(index, headers)
                 print("\rTapping 👆", end="", flush=True)
 
                 energy_sekarang = user_data['currentEnergy']
                 energy_used = energy_sekarang - 100
-                damage = user_data['weaponLevel'] + 1
+                damage = user_data['weaponLevel']+1
                 total_tap = energy_used // damage
-
+  
                 if energy_sekarang < 0.25 * user_data['maxEnergy']:
                     if auto_booster == 'y':
                         if user_data['freeBoosts']['currentRefillEnergyAmount'] > 0:
                             print("\r🪫 Energy Habis, mengaktifkan Recharge Booster... \n", end="", flush=True)
-                            activate_energy_recharge_booster(index, headers)
+                            await activate_energy_recharge_booster(index, headers)
                             continue  # Lanjutkan tapping setelah recharge
                         else:
                             print("\r🪫 Energy Habis, tidak ada booster tersedia. Beralih ke akun berikutnya.\n", flush=True)
-                            continue  # Beralih ke akun berikutnya
+                            
                     else:
                         print("\r🪫 Energy Habis, auto booster disable. Beralih ke akun berikutnya.\n", flush=True)
-                        continue  # Beralih ke akun berikutnya
+                        
+ 
 
+                
                 tap_payload = {
-                    "operationName": "MutationGameProcessTapsBatch",
-                    "variables": {
-                        "payload": {
-                            "nonce": generate_random_nonce(),
-                            "tapsCount": total_tap
-                        }
-                    },
-                    "query": MUTATION_GAME_PROCESS_TAPS_BATCH
-                }
-                tap_result = submit_taps(index, tap_payload)
+                        "operationName": "MutationGameProcessTapsBatch",
+                        "variables": {
+                            "payload": {
+                                "nonce": generate_random_nonce(),
+                                "tapsCount": total_tap
+                            }
+                        },
+                        "query": MUTATION_GAME_PROCESS_TAPS_BATCH
+                    }
+                tap_result = await submit_taps(index, tap_payload)
                 if tap_result is not None:
                     print(f"\rTapped ✅\n ")
                 else:
                     print(f"❌ Gagal dengan status {tap_result}, mencoba lagi...")
 
-                if auto_claim_combo == 'y':
-                    claim_combo(index, headers)
                 if turbo_booster == 'y':
                     if user_data['freeBoosts']['currentTurboAmount'] > 0:
-                        activate_booster(index, headers)
+                        await activate_booster(index, headers)
+                      #  activate_turbo_boost(headers)
+                  
+
 
         print("=== [ SEMUA AKUN TELAH DI PROSES ] ===")
-
-        animate_energy_recharge(15)
-
-# Jalankan fungsi main() dan simpan hasilnya
-
-
-def claim_combo(index, headers):
-    access_token = fetch(index + 1)
-    url = "api-gw-tg.memefi.club"
-    headers = headers_set.copy()  # Membuat salinan headers_set agar tidak mengubah variabel global
-    headers['Authorization'] = f'Bearer {access_token}'
-
-    nonce = generate_random_nonce()
-    taps_count = random.randint(5, 10)  # Contoh: tapsCount dinamis antara 5 dan 10
-    claim_combo_payload = {
-        "operationName": "MutationGameProcessTapsBatch",
-        "variables": {
-            "payload": {
-                "nonce": nonce,
-                "tapsCount": taps_count,
-                "vector": vector
-            }
-        },
-        "query": """
-        mutation MutationGameProcessTapsBatch($payload: TelegramGameTapsBatchInput!) {
-          telegramGameProcessTapsBatch(payload: $payload) {
-            ...FragmentBossFightConfig
-            __typename
-          }
-        }
-
-        fragment FragmentBossFightConfig on TelegramGameConfigOutput {
-          _id
-          coinsAmount
-          currentEnergy
-          maxEnergy
-          weaponLevel
-          zonesCount
-          tapsReward
-          energyLimitLevel
-          energyRechargeLevel
-          tapBotLevel
-          currentBoss {
-            _id
-            level
-            currentHealth
-            maxHealth
-            __typename
-          }
-          freeBoosts {
-            _id
-            currentTurboAmount
-            maxTurboAmount
-            turboLastActivatedAt
-            turboAmountLastRechargeDate
-            currentRefillEnergyAmount
-            maxRefillEnergyAmount
-            refillEnergyLastActivatedAt
-            refillEnergyAmountLastRechargeDate
-            __typename
-          }
-          bonusLeaderDamageEndAt
-          bonusLeaderDamageStartAt
-          bonusLeaderDamageMultiplier
-          nonce
-          __typename
-        }
-        """
-    }
-
-    response = safe_post(url, headers, claim_combo_payload)
-    if response and 'data' in response and 'telegramGameProcessTapsBatch' in response['data']:
-        game_data = response['data']['telegramGameProcessTapsBatch']
-        if game_data['tapsReward'] is None:
-            print("❌ Combo sudah pernah diklaim: Tidak ada reward yang tersedia.")
-        else:
-            print(f"✅ Combo diklaim dengan sukses: Reward taps {game_data['tapsReward']}")
-    else:
-        print("❌ Gagal mengklaim combo: Data tidak lengkap atau tidak ada.")
-
+    
+        animate_energy_recharge(15)   
+        
+  
 def animate_energy_recharge(duration):
     frames = ["|", "/", "-", "\\"]
     end_time = time.time() + duration
@@ -533,8 +481,14 @@ def animate_energy_recharge(duration):
         for frame in frames:
             print(f"\r🪫 Mengisi ulang energi {frame} - Tersisa {remaining_time} detik         ", end="", flush=True)
             time.sleep(0.25)
-    print("\r🔋 Pengisian energi selesai.                            ", flush=True)
-
+    print("\r🔋 Pengisian energi selesai.                            ", flush=True)     
+# while True:
+#     cek_task_enable = input("Cek Task (default n) ? (y/n): ").strip().lower()
+#     if cek_task_enable in ['y', 'n', '']:
+#         cek_task_enable = cek_task_enable or 'n'
+#         break
+#     else:
+#         print("Masukkan 'y' atau 'n'.")
 cek_task_enable = 'n'
 while True:
     auto_booster = input("Use Energy Booster (default n) ? (y/n): ").strip().lower()
@@ -560,23 +514,6 @@ if turbo_booster == 'y':
             break
         else:
             print("Masukkan 'y' atau 'n'.")
-
-while True:
-    auto_claim_combo = input("Auto claim daily combo (default n) ? (y/n): ").strip().lower()
-    if auto_claim_combo in ['y', 'n', '']:
-        auto_claim_combo = auto_claim_combo or 'n'
-        break
-    else:
-        print("Masukkan 'y' atau 'n'.")
-
-if auto_claim_combo == 'y':
-    while True:
-        combo_input = input("Masukkan combo (misal: 1,3,2,4,4,3,2,1): ").strip()
-        if combo_input:
-            vector = combo_input
-            break
-        else:
-            print("Masukkan combo yang valid.")
-
 # Jalankan fungsi main() dan simpan hasilnya
-main()
+asyncio.run(main())
+
